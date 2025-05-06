@@ -1,0 +1,27 @@
+# filepath: d:\Elysian_Vault\backend\.gitignore
+# Dependencies
+node_modules/
+
+# Environment variables file
+# IMPORTANT: Contains sensitive secrets like database passwords, JWT secrets, etc.
+.env
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Upload directories
+# Ignore temporary uploads and encrypted user files.
+# Profile images could optionally be committed if they are placeholders,
+# but generally user-uploaded content shouldn't be in the repo.
+uploads/temp/
+uploads/encrypted/
+# uploads/profile-images/ # Uncomment this line if you also want to ignore profile images
+
+# OS generated files
+.DS_Store
+Thumbs.db
