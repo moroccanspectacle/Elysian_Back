@@ -27,7 +27,7 @@ app.use((req, res, next) => {
 // Update CORS configuration
 app.use(cors({
   // Allow requests from both ports
-  origin: ['http://localhost:3001', 'http://localhost:3000'],
+  origin: ['http://localhost:3001', 'http://localhost:3000', process.env.FRONTEND_URL],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
