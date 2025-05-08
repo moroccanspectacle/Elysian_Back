@@ -6,14 +6,15 @@ const { v4: uuidv4 } = require('uuid');
 const verifyToken = require('./verifyToken');
 const { encryptFile, decryptFile } = require('../config/encryption');
 const File = require('../models/File');
-const VaultFile = require('../models/vaultFile'); // Keep this import
+const VaultFile = require('../models/vaultFile'); 
 const TeamMember = require('../models/TeamMember');
 const Team = require('../models/Team');
 const TeamSettings = require('../models/TeamSettings');
 const SystemSettings = require('../models/SystemSettings');
 const { generateFileHash, verifyFileIntegrity } = require('../config/fileIntegrity');
 const { logActivity } = require('../services/logger');
-const { Op, literal } = require('sequelize'); // <-- Import Op and literal
+const { Op, literal } = require('sequelize'); 
+// const {uploadToSpaces, downloadFromSpaces} = require('../config/spaces');
 
 const uploadDir = path.join(__dirname, '../uploads/temp');
 const encryptedDir = path.join(__dirname, '../uploads/encrypted');
@@ -21,7 +22,7 @@ const encryptedDir = path.join(__dirname, '../uploads/encrypted');
 console.log("Upload directory:", uploadDir);
 console.log("Encrypted directory:", encryptedDir);
 
-// Check and fix directory permissions
+
 [uploadDir, encryptedDir].forEach(dir => {
   try {
     if (!fs.existsSync(dir)) {
@@ -214,6 +215,7 @@ router.post('/upload', verifyToken, async (req, res, next) => {
             console.log("Starting file encryption...");
             const iv = await encryptFile(tempPath, encryptedPath, encryptedFileName);
             console.log("File encrypted successfully with IV:", iv.substring(0, 10) + "...");
+            
             
             // Generate hash AFTER encryption
             console.log("Starting file hash generation of encrypted file...");
