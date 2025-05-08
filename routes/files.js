@@ -14,7 +14,7 @@ const SystemSettings = require('../models/SystemSettings');
 const { generateFileHash, verifyFileIntegrity } = require('../config/fileIntegrity');
 const { logActivity } = require('../services/logger');
 const { Op, literal } = require('sequelize'); 
-const {uploadToSpaces, downloadFromSpaces, deleteFromSpaces, fileExistsInSpaces} = require('../config/spaces');
+const {uploadToSpaces, downloadFromSpaces, deleteFromSpaces, fileExistsInSpaces} = require('../services/spaces');
 
 const uploadDir = path.join(__dirname, '../uploads/temp');
 const encryptedDir = path.join(__dirname, '../uploads/encrypted');
