@@ -155,48 +155,52 @@ app.get('*', (req, res) => {
 
 // Add this after you've set up all your routes
 
-// Auto initialize super admin on server start
-const axios = require('axios');
-const http = require('http');
+// Replace the HTTP request approach with direct function call
 const initializeSuperAdmin = async () => {
   try {
     console.log('Checking for super admin account...');
-    const agent = new http.Agent({ keepAlive: false });
     
-    // Fix URL construction using FRONTEND_URL properly
-    let baseUrl;
-    if (process.env.NODE_ENV === 'production') {
-      // Use FRONTEND_URL but replace frontend URL with backend API URL
-      const apiUrl = process.env.FRONTEND_URL 
-        ? new URL(process.env.FRONTEND_URL).origin 
-        : `http://localhost:${process.env.PORT || 3000}`;
-      baseUrl = apiUrl;
-    } else {
-      baseUrl = 'http://localhost:3000';
-    }
+    // Import User model and other required dependencies
+    const User = require('./models/User');
+    const bcrypt = require('bcryptjs');
+    const SystemSettings = require('./models/SystemSettings');
     
-    console.log(`Making request to: ${baseUrl}/api/files/init-super-admin`);
+    // Check if super admin already exists
+    const adminExists = await User.findOne({
+      where: { role: 'super_admin' }
+    });
     
-    const response = await axios.post(
-      `${baseUrl}/api/files/init-super-admin`, 
-      {}, 
-      { 
-        httpAgent: agent,
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-    
-    if (response.status === 201) {
-      console.log('✅ Super admin created successfully');
-    } else if (response.status === 200) {
+    if (adminExists) {
       console.log('ℹ️ Super admin already exists, no action needed');
+      return;
     }
+    
+    // Get credentials from environment variables or use defaults
+    const adminUsername = process.env.INITIAL_ADMIN_USERNAME || 'superadmin';
+    const adminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@elysianvault.com';
+    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'temporaryPassword123!';
+    
+    // Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(adminPassword, salt);
+    
+    // Get system settings for default storage quota
+    const systemSettings = await SystemSettings.findOne({ where: { id: 1 } });
+    const defaultQuota = (systemSettings?.storageQuota || 10000) * 1024 * 1024 * 1024; // 10TB default
+    
+    // Create the super admin user
+    const admin = await User.create({
+      username: adminUsername,
+      email: adminEmail,
+      password: hashedPassword,
+      role: 'super_admin',
+      storageQuota: defaultQuota,
+      currentUsage: 0
+    });
+    
+    console.log('✅ Super admin created successfully:', admin.email);
   } catch (error) {
     console.error('❌ Failed to initialize super admin:', error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      console.error('Response data:', error.response.data);
-    }
   }
 };
 
