@@ -163,11 +163,19 @@ const initializeSuperAdmin = async () => {
     console.log('Checking for super admin account...');
     const agent = new http.Agent({ keepAlive: false });
     
-    // Make internal request to the init-super-admin endpoint
-    // Using localhost to ensure it's internal only
-    const baseUrl = process.env.NODE_ENV === 'production' 
-      ? process.env.FRONTEND_URL + (process.env.PORT || 3000) 
-      : 'http://localhost:3000';
+    // Fix URL construction using FRONTEND_URL properly
+    let baseUrl;
+    if (process.env.NODE_ENV === 'production') {
+      // Use FRONTEND_URL but replace frontend URL with backend API URL
+      const apiUrl = process.env.FRONTEND_URL 
+        ? new URL(process.env.FRONTEND_URL).origin 
+        : `http://localhost:${process.env.PORT || 3000}`;
+      baseUrl = apiUrl;
+    } else {
+      baseUrl = 'http://localhost:3000';
+    }
+    
+    console.log(`Making request to: ${baseUrl}/api/files/init-super-admin`);
     
     const response = await axios.post(
       `${baseUrl}/api/files/init-super-admin`, 
@@ -185,6 +193,10 @@ const initializeSuperAdmin = async () => {
     }
   } catch (error) {
     console.error('❌ Failed to initialize super admin:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
   }
 };
 
