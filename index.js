@@ -153,6 +153,41 @@ app.get('*', (req, res) => {
   }
 });
 
+// Add this after you've set up all your routes
+
+// Auto initialize super admin on server start
+const axios = require('axios');
+const http = require('http');
+const initializeSuperAdmin = async () => {
+  try {
+    console.log('Checking for super admin account...');
+    const agent = new http.Agent({ keepAlive: false });
+    
+    // Make internal request to the init-super-admin endpoint
+    // Using localhost to ensure it's internal only
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? process.env.FRONTEND_URL + (process.env.PORT || 3000) 
+      : 'http://localhost:3000';
+    
+    const response = await axios.post(
+      `${baseUrl}/api/files/init-super-admin`, 
+      {}, 
+      { 
+        httpAgent: agent,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+    
+    if (response.status === 201) {
+      console.log('✅ Super admin created successfully');
+    } else if (response.status === 200) {
+      console.log('ℹ️ Super admin already exists, no action needed');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize super admin:', error.message);
+  }
+};
+
 // Sync all models with database
 sequelize.sync({ alter: true })
   .then(() => {
@@ -160,6 +195,8 @@ sequelize.sync({ alter: true })
     app.listen(PORT, () => {
       console.log(`[SERVER_LOG] Server is running on port ${PORT}`);
       scheduleFileCleanup(); // Start scheduled tasks
+      // Initialize super admin after server has started
+      setTimeout(initializeSuperAdmin, 1000);
     });
   })
   .catch(err => {
