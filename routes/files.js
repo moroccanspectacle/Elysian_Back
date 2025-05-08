@@ -535,4 +535,54 @@ router.get('/verify/:id', verifyToken, async (req, res) =>{
         res.status(500).json({error: 'File integrity verification failed'});
     }
 });
+// POST route to create initial super admin during deployment
+router.post('/init-super-admin', async (req, res) => {
+  try {
+    // Check if super admin already exists
+    const User = require('../models/User');
+    const bcrypt = require('bcryptjs');
+    
+    const adminExists = await User.findOne({
+      where: { role: 'super_admin' }
+    });
+    
+    if (adminExists) {
+      console.log('Super admin already exists, skipping creation');
+      return res.status(200).json({ message: 'Super admin already exists' });
+    }
+    
+    // Get credentials from environment variables or use defaults
+    const adminUsername = process.env.INITIAL_ADMIN_USERNAME || 'superadmin';
+    const adminEmail = process.env.INITIAL_ADMIN_EMAIL || 'admin@elysianvault.com';
+    const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || 'temporaryPassword123!';
+    
+    // Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(adminPassword, salt);
+    
+    // Get system settings for default storage quota
+    const systemSettings = await SystemSettings.findOne({ where: { id: 1 } });
+    const defaultQuota = (systemSettings?.storageQuota || 10000) * 1024 * 1024 * 1024; // 10TB default
+    
+    // Create the super admin user
+    const admin = await User.create({
+      username: adminUsername,
+      email: adminEmail,
+      password: hashedPassword,
+      role: 'super_admin',
+      storageQuota: defaultQuota,
+      currentUsage: 0
+    });
+    
+    console.log(`Super admin created successfully: ${adminEmail}`);
+    res.status(201).json({ 
+      message: 'Super admin created successfully',
+      username: admin.username,
+      email: admin.email
+    });
+  } catch (error) {
+    console.error('Admin setup error:', error);
+    res.status(500).json({ error: 'Failed to create super admin' });
+  }
+});
 module.exports = router;
