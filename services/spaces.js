@@ -25,13 +25,14 @@ const uploadToSpaces = async (filePath, fileName) => {
     return s3.upload(params).promise();
 };
 
-const downloadFromSpaces = async (fileName) => {
+const downloadFromSpaces = async (sourceKey, destinationPath) => {
     const params = {
         Bucket: BUCKET_NAME,
         Key: sourceKey
     };
     const { Body } = await s3.getObject(params).promise();
     const dir = path.dirname(destinationPath);
+    
     if (!fs.existsSync(dir)){
         fs.mkdirSync(dir, {recursive: true});
     }

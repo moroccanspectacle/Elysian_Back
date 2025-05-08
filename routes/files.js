@@ -14,7 +14,7 @@ const SystemSettings = require('../models/SystemSettings');
 const { generateFileHash, verifyFileIntegrity } = require('../config/fileIntegrity');
 const { logActivity } = require('../services/logger');
 const { Op, literal } = require('sequelize'); 
-// const {uploadToSpaces, downloadFromSpaces} = require('../config/spaces');
+const {uploadToSpaces, downloadFromSpaces, deleteFromSpaces, fileExistsInSpaces} = require('../config/spaces');
 
 const uploadDir = path.join(__dirname, '../uploads/temp');
 const encryptedDir = path.join(__dirname, '../uploads/encrypted');
@@ -216,26 +216,18 @@ router.post('/upload', verifyToken, async (req, res, next) => {
             const iv = await encryptFile(tempPath, encryptedPath, encryptedFileName);
             console.log("File encrypted successfully with IV:", iv.substring(0, 10) + "...");
             
-            
             // Generate hash AFTER encryption
             console.log("Starting file hash generation of encrypted file...");
             const fileHash = await generateFileHash(encryptedPath);
             console.log("Encrypted file hash generated successfully:", fileHash.substring(0, 10) + "...");
             
-            console.log("Creating database record with user ID:", req.user.id);
-            console.log("User ID type:", typeof req.user.id);
+            // Upload to Digital Ocean Spaces
+            console.log("Uploading encrypted file to Spaces...");
+            const spacesKey = `encrypted/${encryptedFileName}`;
+            const uploadResult = await uploadToSpaces(encryptedPath, spacesKey);
+            console.log("File uploaded to Spaces successfully:", uploadResult.Location);
             
-            // Convert userId to number if it's a string
-            const userId = typeof req.user.id === 'string' ? parseInt(req.user.id, 10) : req.user.id;
-            
-            // Set expiration date if enabled in system settings
-            let expiryDate = null;
-            if (systemSettings?.fileExpiration) {
-                // Default expiration after 30 days
-                expiryDate = new Date();
-                expiryDate.setDate(expiryDate.getDate() + 30);
-            }
-            
+            // Create database record
             const fileRecord = await File.create({
                 originalName: originalname,
                 fileName: encryptedFileName,
@@ -246,8 +238,14 @@ router.post('/upload', verifyToken, async (req, res, next) => {
                 userId: userId,
                 teamId: isTeamUpload ? teamId : null,
                 isTeamFile: isTeamUpload,
-                expiryDate: expiryDate
+                expiryDate: expiryDate,
+                storageLocation: 'spaces',
+                spacesKey: spacesKey
             });
+            
+            // Clean up local encrypted file (optional - keep for caching)
+            // fs.unlinkSync(encryptedPath);
+            
             console.log(`File record created with ID: ${fileRecord.id}`);
             
             // Log the upload activity
@@ -298,6 +296,12 @@ router.get('/download/:id', verifyToken, async (req, res)=>
         }
 
         const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
+
+        // Check if we need to download from Spaces
+        if (fileRecord.storageLocation === 'spaces' && !fs.existsSync(encryptedFilePath)) {
+            console.log(`Downloading file from Spaces: ${fileRecord.spacesKey}`);
+            await downloadFromSpaces(fileRecord.spacesKey, encryptedFilePath);
+        }
 
         const encryptedFileHash = await generateFileHash(encryptedFilePath);
         const integrityStatus = {

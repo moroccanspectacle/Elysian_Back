@@ -74,6 +74,15 @@ const File = sequelize.define('File',
         expiryDate: {
             type: DataTypes.DATE,
             allowNull: true // Allow null since not all files need expiration dates
+        },
+        storageLocation: {
+            type: DataTypes.STRING,
+            allowNull: false,
+            defaultValue: 'local', // 'local' or 'spaces'
+        },
+        spacesKey: {
+            type: DataTypes.STRING,
+            allowNull: true,
         }
 });
 
