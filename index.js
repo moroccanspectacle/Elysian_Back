@@ -125,31 +125,34 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // The "catch all" handler for any request that doesn't match one above
-// Send back React's index.html file
 app.get('*', (req, res) => {
+  // Skip API routes - they should have been handled already
+  if (req.url.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  
   if (process.env.NODE_ENV === 'production') {
     const indexPath = path.join(__dirname, '../frontend/dist/index.html');
-    console.log(`[SERVER_LOG] Catch-all: Attempting to send file: ${indexPath}`);
-    res.sendFile(indexPath, (err) => {
-      if (err) {
-        console.error(`[SERVER_LOG] Catch-all: Error sending file ${indexPath}:`, err);
-        // Don't send a JSON error here, as the client expects HTML or an asset
-        // Let the browser handle the 404 if sendFile fails to find it.
-        // res.status(err.status || 500).end(); // This might be too aggressive
-         if (!res.headersSent) {
-            res.status(404).send(`File not found: ${req.path}`);
-         }
-      } else {
-        console.log(`[SERVER_LOG] Catch-all: Successfully sent ${indexPath} for ${req.path}`);
-      }
-    });
-  } else {
-    if (req.url.startsWith('/api/')) {
-      res.status(404).json({ error: 'API endpoint not found' });
+    
+    // Ensure the file exists before trying to send it
+    if (fs.existsSync(indexPath)) {
+      console.log(`[SERVER_LOG] Serving React app for: ${req.path}`);
+      return res.sendFile(indexPath);
     } else {
-      console.log(`[SERVER_LOG] Development mode: Redirecting ${req.originalUrl} to frontend (localhost:3001)`);
-      res.redirect('http://localhost:3001' + req.originalUrl);
+      console.error(`[SERVER_LOG] React app index.html not found at ${indexPath}`);
+      // Check parent directories to help with debugging
+      const frontendDir = path.join(__dirname, '../frontend');
+      const distDir = path.join(frontendDir, 'dist');
+      
+      console.error(`Frontend directory exists: ${fs.existsSync(frontendDir)}`);
+      console.error(`Dist directory exists: ${fs.existsSync(distDir)}`);
+      
+      return res.status(404).send('Application not available. Please contact support.');
     }
+  } else {
+    // In development, redirect to the separate frontend dev server
+    console.log(`[SERVER_LOG] Development mode: Redirecting ${req.originalUrl} to frontend`);
+    res.redirect(`http://localhost:3001${req.originalUrl}`);
   }
 });
 
