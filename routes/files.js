@@ -227,6 +227,14 @@ router.post('/upload', verifyToken, async (req, res, next) => {
             const uploadResult = await uploadToSpaces(encryptedPath, spacesKey);
             console.log("File uploaded to Spaces successfully:", uploadResult.Location);
             
+            // Calculate expiry date if needed
+            let expiryDate = null;
+            if (systemSettings?.fileExpiration) {
+                // Set expiry date to 30 days from now (or adjust as needed)
+                expiryDate = new Date();
+                expiryDate.setDate(expiryDate.getDate() + 30);
+            }
+            
             // Create database record
             const fileRecord = await File.create({
                 originalName: originalname,
@@ -235,7 +243,7 @@ router.post('/upload', verifyToken, async (req, res, next) => {
                 fileType: mimetype,
                 iv: iv,
                 fileHash: fileHash,
-                userId: userId,
+                userId: req.user.id,  // FIXED: Using req.user.id instead of userId
                 teamId: isTeamUpload ? teamId : null,
                 isTeamFile: isTeamUpload,
                 expiryDate: expiryDate,
