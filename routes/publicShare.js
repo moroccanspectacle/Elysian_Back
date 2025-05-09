@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { decryptFile } = require('../config/encryption');
 const { logActivity } = require('../services/logger');
+const { downloadFromSpaces } = require('../services/spacesService'); // Import downloadFromSpaces
 
 // Get file info for a shared link
 router.get('/:shareToken', async (req, res) => {
@@ -146,9 +147,31 @@ router.get('/:shareToken/view', async (req, res) => {
         }
 
         const file = share.File;
-        // Add this line to define encryptedDir
         const encryptedDir = path.join(__dirname, '../uploads/encrypted');
         const encryptedFilePath = path.join(encryptedDir, file.fileName);
+
+        // Ensure encryptedDir exists (especially if downloading from Spaces)
+        if (!fs.existsSync(encryptedDir)) {
+            fs.mkdirSync(encryptedDir, { recursive: true });
+        }
+
+        // Check if we need to download from Spaces
+        if (file.storageLocation === 'spaces' && file.spacesKey && !fs.existsSync(encryptedFilePath)) {
+            console.log(`[PublicShare View] File ${file.fileName} is in Spaces. Downloading from spacesKey: ${file.spacesKey} to ${encryptedFilePath}`);
+            try {
+                await downloadFromSpaces(file.spacesKey, encryptedFilePath);
+                console.log(`[PublicShare View] Successfully downloaded ${file.fileName} from Spaces.`);
+            } catch (spacesError) {
+                console.error(`[PublicShare View] Error downloading ${file.fileName} from Spaces:`, spacesError);
+                return res.status(500).json({ error: 'Failed to retrieve file from storage for viewing.' });
+            }
+        }
+
+        // Now, check if the file exists locally (either it was local, or just downloaded)
+        if (!fs.existsSync(encryptedFilePath)) {
+            console.error(`[PublicShare View] Encrypted file not found locally after check/download: ${encryptedFilePath}`);
+            return res.status(404).json({ error: 'Shared file content not found.' });
+        }
 
         // Create temp directory for viewing
         const viewDir = path.join(__dirname, '../uploads/view');
