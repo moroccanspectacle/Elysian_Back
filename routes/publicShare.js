@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { decryptFile } = require('../config/encryption');
 const { logActivity } = require('../services/logger');
-const { downloadFromSpaces } = require('../services/spaces'); // Import downloadFromSpaces
+const { downloadFromSpaces } = require('../services/spaces');
 
 // Get file info for a shared link
 router.get('/:shareToken', async (req, res) => {

@@ -19,6 +19,9 @@ const {uploadToSpaces, downloadFromSpaces, deleteFromSpaces, fileExistsInSpaces}
 const uploadDir = path.join(__dirname, '../uploads/temp');
 const encryptedDir = path.join(__dirname, '../uploads/encrypted');
 
+console.log("[File Service] __dirname:", __dirname);
+console.log("[File Service] Resolved encryptedDir:", encryptedDir);
+
 console.log("Upload directory:", uploadDir);
 console.log("Encrypted directory:", encryptedDir);
 
@@ -366,7 +369,13 @@ router.get('/view/:id', verifyToken, async (req, res)=>{
         if (!fileRecord) return res.status(404).json({error: 'File not found'});
         const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
 
+        if (!fs.existsSync(encryptedFilePath)) {
+            console.error(`[File View] Encrypted file not found locally after check/download (L366): ${encryptedFilePath}`);
+            return res.status(404).json({ error: 'Shared file content not found.' });
+        }
+        console.log(`[File View] About to generate hash for (L368): ${encryptedFilePath}`); // <-- ADD THIS LOG
         const encryptedFileHash = await generateFileHash(encryptedFilePath);
+
         const integrityVerified = encryptedFileHash === fileRecord.fileHash;
 
         const viewDir = path.join(__dirname, '../uploads/view');
