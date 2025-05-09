@@ -16,17 +16,21 @@ const { logActivity } = require('../services/logger');
 const { Op, literal } = require('sequelize'); 
 const {uploadToSpaces, downloadFromSpaces, deleteFromSpaces, fileExistsInSpaces} = require('../services/spaces');
 
-const uploadDir = path.join(__dirname, '../uploads/temp');
-const encryptedDir = path.join(__dirname, '../uploads/encrypted');
+// --- MODIFIED PATHS ---
+const projectRoot = process.cwd(); // Should resolve to /workspace on App Platform
+const uploadDir = path.resolve(projectRoot, 'uploads/temp');
+const encryptedDir = path.resolve(projectRoot, 'uploads/encrypted');
+const viewDirGlobal = path.resolve(projectRoot, 'uploads/view'); // For /view route
+const decryptedDirGlobal = path.resolve(projectRoot, 'uploads/decrypted'); // For /download route
 
 console.log("[File Service] __dirname:", __dirname);
+console.log("[File Service] projectRoot (cwd):", projectRoot);
+console.log("[File Service] Resolved uploadDir:", uploadDir);
 console.log("[File Service] Resolved encryptedDir:", encryptedDir);
+console.log("[File Service] Resolved viewDirGlobal:", viewDirGlobal);
+console.log("[File Service] Resolved decryptedDirGlobal:", decryptedDirGlobal);
 
-console.log("Upload directory:", uploadDir);
-console.log("Encrypted directory:", encryptedDir);
-
-
-[uploadDir, encryptedDir].forEach(dir => {
+[uploadDir, encryptedDir, viewDirGlobal, decryptedDirGlobal].forEach(dir => {
   try {
     if (!fs.existsSync(dir)) {
       console.log(`Creating directory: ${dir}`);
@@ -321,13 +325,7 @@ router.get('/download/:id', verifyToken, async (req, res)=>
             currentHash: encryptedFileHash
         }
 
-        const decryptedDir = path.join(__dirname, '../uploads/decrypted');
-        if (!fs.existsSync(decryptedDir))
-        {
-            fs.mkdirSync(decryptedDir, {recursive: true});
-            
-        }
-        const decryptedFilePath = path.join(decryptedDir, fileRecord.originalName);
+        const decryptedFilePath = path.join(decryptedDirGlobal, fileRecord.originalName);
         await decryptFile(encryptedFilePath, decryptedFilePath);
 
         // Log the download activity before sending the file
@@ -355,7 +353,6 @@ router.get('/download/:id', verifyToken, async (req, res)=>
     }
 });
 router.get('/view/:id', verifyToken, async (req, res)=>{
-
     try {
         const fileId = req.params.id;
         const fileRecord = await File.findOne({
@@ -367,21 +364,40 @@ router.get('/view/:id', verifyToken, async (req, res)=>{
         });
 
         if (!fileRecord) return res.status(404).json({error: 'File not found'});
+        
+        // Use the globally defined encryptedDir
         const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
 
+        // --- ADDED/MODIFIED SPACES DOWNLOAD LOGIC ---
+        // Ensure encryptedDir exists (especially if downloading from Spaces)
+        if (!fs.existsSync(encryptedDir)) {
+            fs.mkdirSync(encryptedDir, { recursive: true });
+        }
+
+        // Check if we need to download from Spaces
+        if (fileRecord.storageLocation === 'spaces' && fileRecord.spacesKey && !fs.existsSync(encryptedFilePath)) {
+            console.log(`[File View] File ${fileRecord.fileName} is in Spaces. Downloading from spacesKey: ${fileRecord.spacesKey} to ${encryptedFilePath}`);
+            try {
+                await downloadFromSpaces(fileRecord.spacesKey, encryptedFilePath);
+                console.log(`[File View] Successfully downloaded ${fileRecord.fileName} from Spaces.`);
+            } catch (spacesError) {
+                console.error(`[File View] Error downloading ${fileRecord.fileName} from Spaces:`, spacesError);
+                return res.status(500).json({ error: 'Failed to retrieve file from storage for viewing.' });
+            }
+        }
+        // --- END SPACES DOWNLOAD LOGIC ---
+
+        // Now, check if the file exists locally (either it was local, or just downloaded)
         if (!fs.existsSync(encryptedFilePath)) {
-            console.error(`[File View] Encrypted file not found locally after check/download (L366): ${encryptedFilePath}`);
-            return res.status(404).json({ error: 'Shared file content not found.' });
+            console.error(`[File View] Encrypted file not found locally after check/download: ${encryptedFilePath}`);
+            return res.status(404).json({ error: 'File content not found.' }); // Corrected error message
         }
         console.log(`[File View] About to generate hash for (L368): ${encryptedFilePath}`); // <-- ADD THIS LOG
         const encryptedFileHash = await generateFileHash(encryptedFilePath);
 
         const integrityVerified = encryptedFileHash === fileRecord.fileHash;
 
-        const viewDir = path.join(__dirname, '../uploads/view');
-        if (!fs.existsSync(viewDir)) fs.mkdirSync(viewDir, {recursive: true});
-
-        const decryptedFilePath = path.join(viewDir, `view_${Date.now()}_${fileRecord.originalName}`);
+        const decryptedFilePath = path.join(viewDirGlobal, `view_${Date.now()}_${fileRecord.originalName}`);
         await decryptFile(encryptedFilePath, decryptedFilePath);
 
         await logActivity('view', req.user.id, fileRecord.id, null, req);
