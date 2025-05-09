@@ -358,41 +358,55 @@ router.get('/view/:id', verifyToken, async (req, res)=>{
         const fileRecord = await File.findOne({
             where: {
                 id: fileId,
-                userId: req.user.id,
+                userId: req.user.id, // This ensures the current user is the uploader
                 isDeleted: false
             }
         });
 
-        if (!fileRecord) return res.status(404).json({error: 'File not found'});
+        if (!fileRecord) {
+            console.log(`[File View] File record not found for id: ${fileId} and userId: ${req.user.id}`);
+            return res.status(404).json({error: 'File not found'});
+        }
         
-        // Use the globally defined encryptedDir
-        const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
+        console.log(`[File View] Found fileRecord: ID=${fileRecord.id}, Name=${fileRecord.fileName}, IsTeamFile=${fileRecord.isTeamFile}, Storage=${fileRecord.storageLocation}, SpacesKey=${fileRecord.spacesKey}`);
 
-        // --- ADDED/MODIFIED SPACES DOWNLOAD LOGIC ---
-        // Ensure encryptedDir exists (especially if downloading from Spaces)
+        const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
+        console.log(`[File View] Constructed encryptedFilePath: ${encryptedFilePath}`);
+
         if (!fs.existsSync(encryptedDir)) {
+            console.log(`[File View] Encrypted directory ${encryptedDir} does not exist. Creating.`);
             fs.mkdirSync(encryptedDir, { recursive: true });
         }
 
         // Check if we need to download from Spaces
-        if (fileRecord.storageLocation === 'spaces' && fileRecord.spacesKey && !fs.existsSync(encryptedFilePath)) {
-            console.log(`[File View] File ${fileRecord.fileName} is in Spaces. Downloading from spacesKey: ${fileRecord.spacesKey} to ${encryptedFilePath}`);
-            try {
-                await downloadFromSpaces(fileRecord.spacesKey, encryptedFilePath);
-                console.log(`[File View] Successfully downloaded ${fileRecord.fileName} from Spaces.`);
-            } catch (spacesError) {
-                console.error(`[File View] Error downloading ${fileRecord.fileName} from Spaces:`, spacesError);
-                return res.status(500).json({ error: 'Failed to retrieve file from storage for viewing.' });
+        if (fileRecord.storageLocation === 'spaces' && fileRecord.spacesKey) {
+            if (!fs.existsSync(encryptedFilePath)) {
+                console.log(`[File View] TEAM_DEBUG: File not local. Attempting download for fileId: ${fileRecord.id}, fileName: ${fileRecord.fileName}, isTeamFile: ${fileRecord.isTeamFile}, spacesKey: ${fileRecord.spacesKey}, to: ${encryptedFilePath}`);
+                try {
+                    await downloadFromSpaces(fileRecord.spacesKey, encryptedFilePath);
+                    // This log is CRITICAL. If it appears, downloadFromSpaces returned.
+                    console.log(`[File View] TEAM_DEBUG: downloadFromSpaces call completed for fileId: ${fileRecord.id}. Now re-checking existence of ${encryptedFilePath}`);
+                } catch (spacesError) {
+                    // This catch is for errors thrown BY downloadFromSpaces
+                    console.error(`[File View] TEAM_DEBUG: Error explicitly thrown by downloadFromSpaces for ${fileRecord.fileName}:`, spacesError);
+                    return res.status(500).json({ error: 'Failed to retrieve file from storage for viewing due to download error.' });
+                }
+            } else {
+                console.log(`[File View] File ${encryptedFilePath} already exists locally. No download needed.`);
             }
+        } else if (fileRecord.storageLocation === 'spaces' && !fileRecord.spacesKey) {
+            console.error(`[File View] File ${fileRecord.id} is in Spaces but has no spacesKey!`);
+            return res.status(500).json({ error: 'File metadata error: missing Spaces key.' });
         }
-        // --- END SPACES DOWNLOAD LOGIC ---
+
 
         // Now, check if the file exists locally (either it was local, or just downloaded)
         if (!fs.existsSync(encryptedFilePath)) {
-            console.error(`[File View] Encrypted file not found locally after check/download: ${encryptedFilePath}`);
-            return res.status(404).json({ error: 'File content not found.' }); // Corrected error message
+            console.error(`[File View] FINAL CHECK FAILED: Encrypted file not found locally after all checks/downloads: ${encryptedFilePath}. isTeamFile: ${fileRecord.isTeamFile}`);
+            return res.status(404).json({ error: 'File content not found. Download may have failed or file is missing.' });
         }
-        console.log(`[File View] About to generate hash for (L368): ${encryptedFilePath}`); // <-- ADD THIS LOG
+        
+        console.log(`[File View] File confirmed to exist locally at: ${encryptedFilePath}. Proceeding to hash generation. isTeamFile: ${fileRecord.isTeamFile}`);
         const encryptedFileHash = await generateFileHash(encryptedFilePath);
 
         const integrityVerified = encryptedFileHash === fileRecord.fileHash;
