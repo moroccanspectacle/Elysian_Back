@@ -355,20 +355,51 @@ router.get('/download/:id', verifyToken, async (req, res)=>
 router.get('/view/:id', verifyToken, async (req, res)=>{
     try {
         const fileId = req.params.id;
+        const currentUserId = req.user.id;
+
+        // Step 1: Find the file by ID first
         const fileRecord = await File.findOne({
             where: {
                 id: fileId,
-                userId: req.user.id, // This ensures the current user is the uploader
                 isDeleted: false
             }
         });
 
         if (!fileRecord) {
-            console.log(`[File View] File record not found for id: ${fileId} and userId: ${req.user.id}`);
+            console.log(`[File View] File record not found for id: ${fileId}`);
             return res.status(404).json({error: 'File not found'});
         }
+
+        // Step 2: Authorization check
+        if (fileRecord.isTeamFile && fileRecord.teamId) {
+            // It's a team file, check if the current user is a member of that team
+            const teamMembership = await TeamMember.findOne({
+                where: {
+                    teamId: fileRecord.teamId,
+                    userId: currentUserId,
+                    status: 'active' // Ensure the member is active in the team
+                }
+            });
+
+            if (!teamMembership) {
+                console.log(`[File View] User ${currentUserId} is not an active member of team ${fileRecord.teamId} for file ${fileId}`);
+                return res.status(403).json({error: 'Access denied. You are not an active member of the team that owns this file.'});
+            }
+            // User is a member of the team, allow access
+            console.log(`[File View] User ${currentUserId} is an active member of team ${fileRecord.teamId}. Access granted to team file ${fileId}.`);
+
+        } else {
+            // It's a personal file, check if the current user is the owner
+            if (fileRecord.userId !== currentUserId) {
+                console.log(`[File View] User ${currentUserId} is not the owner of personal file ${fileId} (owner: ${fileRecord.userId})`);
+                return res.status(403).json({error: 'Access denied. You are not the owner of this file.'});
+            }
+            // User is the owner, allow access
+            console.log(`[File View] User ${currentUserId} is the owner of personal file ${fileId}. Access granted.`);
+        }
         
-        console.log(`[File View] Found fileRecord: ID=${fileRecord.id}, Name=${fileRecord.fileName}, IsTeamFile=${fileRecord.isTeamFile}, Storage=${fileRecord.storageLocation}, SpacesKey=${fileRecord.spacesKey}`);
+        // If authorization passed, proceed with file processing
+        console.log(`[File View] Authorized. Found fileRecord: ID=${fileRecord.id}, Name=${fileRecord.fileName}, IsTeamFile=${fileRecord.isTeamFile}, Storage=${fileRecord.storageLocation}, SpacesKey=${fileRecord.spacesKey}`);
 
         const encryptedFilePath = path.join(encryptedDir, fileRecord.fileName);
         console.log(`[File View] Constructed encryptedFilePath: ${encryptedFilePath}`);
