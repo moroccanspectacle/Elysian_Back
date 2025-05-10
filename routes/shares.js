@@ -53,7 +53,9 @@ router.get('/myshares', verifyToken, async(req, res) => {
       expiresAt: share.expiresAt,
       permissions: share.permissions,
       accessCount: share.accessCount,
-      createdAt: share.createdAt
+      createdAt: share.createdAt,
+      isPrivateShare: share.isPrivateShare, // <<< ADD THIS LINE
+      recipientUserIds: share.recipientUserIds // <<< ADD THIS LINE (optional, but good for frontend debugging/display)
     }));
 
     res.json(formattedShares);
