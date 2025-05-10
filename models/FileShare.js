@@ -51,6 +51,16 @@ const FileShare = sequelize.define('FileShare', {
             model: User,
             key: 'id'
         }
+    },
+    isPrivateShare: { // New field
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        allowNull: false
+    },
+    recipientUserIds: { // New field
+        type: DataTypes.ARRAY(DataTypes.INTEGER),
+        allowNull: true,
+        defaultValue: null
     }
 });
 

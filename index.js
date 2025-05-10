@@ -2,31 +2,30 @@ const express = require('express');
 const dotenv = require('dotenv');
 const verifyToken = require('./routes/verifyToken'); 
 const cors = require('cors');
-const sequelize = require('./config/database'); // Make sure this is imported
-const path = require('path'); // Import path module
-const fs = require('fs'); // <<<<------ ADD THIS LINE
+const sequelize = require('./config/database');
+const path = require('path');
+const fs = require('fs'); 
 
 dotenv.config();
 
-// Add this near the top of the file with other constants
+
 const PORT = process.env.PORT || 3000;
 
 const app = express();
 
-// --- Add Global Header Logging Middleware (VERY EARLY) ---
 app.use((req, res, next) => {
   // Log only for the specific path we are debugging
   if (req.originalUrl.startsWith('/api/vault/access/')) {
     // Log headers for BOTH OPTIONS and GET requests hitting this path
     console.log(`[EARLY LOGGER] Headers for ${req.method} ${req.originalUrl}:`, JSON.stringify(req.headers, null, 2));
   }
-  next(); // Pass control to the next middleware (cors, etc.)
+  next(); // Pass control to the next middleware
 });
-// --- End Global Header Logging Middleware ---
 
-// Update CORS configuration
+
+
 app.use(cors({
-  // Allow requests from both ports
+  
   origin: ['http://localhost:3001', 'http://localhost:3000', process.env.FRONTEND_URL],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

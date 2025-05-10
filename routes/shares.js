@@ -10,6 +10,18 @@ const fs = require('fs');
 const {decryptFile} = require('../config/encryption');
 const { permission } = require('process');
 const { create } = require('domain');
+const { downloadFromSpaces } = require('../services/spaces');
+
+const projectRoot = process.cwd();
+const encryptedDir = path.resolve(projectRoot, 'uploads/encrypted');
+const sharedTempDir = path.resolve(projectRoot, 'uploads/shared_temp');
+
+if (!fs.existsSync(sharedTempDir)) {
+    fs.mkdirSync(sharedTempDir, { recursive: true });
+}
+if (!fs.existsSync(encryptedDir)) { // Ensure encryptedDir also exists for downloads
+    fs.mkdirSync(encryptedDir, { recursive: true });
+}
 
 // List user's shares - MOVED TO TOP
 router.get('/myshares', verifyToken, async(req, res) => {
@@ -112,48 +124,74 @@ router.get('/file/:fileId', verifyToken, async (req, res) => {
 // Fix the route to /share instead of /create
 router.post('/share', verifyToken, async (req, res) => {
   try {
-    const { fileId, permissions, expirationDays, recipientEmail } = req.body;
+    const { fileId, permissions, expirationDays, recipientEmail, recipientUserEmails, recipientUserIds: directRecipientUserIds } = req.body;
 
-    // Validate fileId exists and belongs to user
     const file = await File.findOne({
       where: {
         id: fileId,
-        userId: req.user.id,
+        userId: req.user.id, // Or team access check if applicable for creating shares
         isDeleted: false
       }
     });
 
     if (!file) {
-      return res.status(404).json({ error: 'File not found' });
+      return res.status(404).json({ error: 'File not found or access denied' });
     }
 
-    // Generate a secure random token
     const shareToken = crypto.randomBytes(32).toString('hex');
-
-    // Calculate expiration date if provided
     const expiresAt = expirationDays
       ? new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000)
       : null;
 
-    // Create share record with explicit fileId
+    let finalRecipientUserIds = null;
+    let isPrivate = false;
+
+    if (directRecipientUserIds && Array.isArray(directRecipientUserIds) && directRecipientUserIds.length > 0) {
+        if (directRecipientUserIds.every(id => typeof id === 'number' && Number.isInteger(id))) {
+            finalRecipientUserIds = [...new Set(directRecipientUserIds)];
+            isPrivate = true;
+        } else {
+            console.warn('[Share Create] Invalid directRecipientUserIds provided, not all are integers.');
+        }
+    } else if (recipientUserEmails && Array.isArray(recipientUserEmails) && recipientUserEmails.length > 0) {
+        const validEmails = recipientUserEmails.filter(email => typeof email === 'string');
+        if (validEmails.length > 0) {
+            const foundUsers = await User.findAll({
+                where: {
+                    email: { [Op.in]: validEmails }
+                },
+                attributes: ['id']
+            });
+            if (foundUsers.length > 0) {
+                finalRecipientUserIds = [...new Set(foundUsers.map(u => u.id))];
+                isPrivate = true;
+            }
+        }
+    }
+
     const shareRecord = await FileShare.create({
       shareToken,
-      fileId: fileId,  // EXPLICITLY set the fileId
+      fileId: fileId,
       expiresAt: expiresAt,
       permissions: permissions || { canView: true, canDownload: false },
       recipientEmail: recipientEmail || null,
       isActive: true,
-      createdById: req.user.id  // Make sure to set the creator
+      createdById: req.user.id,
+      isPrivateShare: isPrivate,
+      recipientUserIds: finalRecipientUserIds
     });
 
-    // Log activity
-    await logActivity('create_share', req.user.id, fileId, 'Created share link', req);
+    await logActivity('create_share', req.user.id, fileId, `Created ${isPrivate ? 'private' : 'public'} share link for token ${shareToken}`, req);
+
+    // TODO: Implement notifications for recipientUserIds if isPrivate is true
 
     res.status(201).json({
       id: shareRecord.id,
       shareToken: shareRecord.shareToken,
-      shareUrl: `${req.protocol}://${req.get('host')}/share/${shareToken}`,
-      expiresAt: shareRecord.expiresAt
+      shareUrl: `${process.env.FRONTEND_URL || req.protocol + '://' + req.get('host')}/share/${shareToken}`,
+      expiresAt: shareRecord.expiresAt,
+      isPrivateShare: shareRecord.isPrivateShare,
+      recipientUserIds: shareRecord.recipientUserIds // For frontend confirmation
     });
   } catch (error) {
     console.error('Error creating share:', error);
@@ -375,6 +413,120 @@ router.put('/:shareId/status', verifyToken, async (req, res) => {
     console.error('Error updating share status: ', error);
     res.status  (500).json({error: 'Error updating share status'});
   }
+});
+
+// Authenticated view for private shares
+router.get('/private/:shareToken/view', verifyToken, async (req, res) => {
+    try {
+        const shareToken = req.params.shareToken;
+        const currentUserId = req.user.id;
+
+        const share = await FileShare.findOne({
+            where: { shareToken: shareToken, isActive: true },
+            include: { model: File, where: { isDeleted: false } }
+        });
+
+        if (!share) return res.status(404).json({ error: 'Share not found or is inactive.' });
+        if (share.expiresAt && new Date() > new Date(share.expiresAt)) return res.status(410).json({ error: 'Share link has expired.' });
+        
+        if (!share.isPrivateShare) { // Should ideally not be hit if frontend routes correctly
+             console.warn(`[Private Share View] Attempt to access non-private share ${shareToken} via private route by user ${currentUserId}`);
+             return res.status(403).json({ error: 'This link is not for private user-specific sharing.' });
+        }
+        if (!share.recipientUserIds || !share.recipientUserIds.includes(currentUserId)) {
+            return res.status(403).json({ error: 'You are not authorized to view this shared file.' });
+        }
+        if (!share.permissions.canView) return res.status(403).json({ error: 'View not allowed for this share.' });
+
+        const file = share.File;
+        const localEncryptedFilePath = path.join(encryptedDir, file.fileName);
+
+        if (file.storageLocation === 'spaces' && file.spacesKey && !fs.existsSync(localEncryptedFilePath)) {
+            console.log(`[Private Share View] File ${file.fileName} in Spaces. Downloading to ${localEncryptedFilePath}`);
+            await downloadFromSpaces(file.spacesKey, localEncryptedFilePath);
+        }
+
+        if (!fs.existsSync(localEncryptedFilePath)) {
+            console.error(`[Private Share View] Encrypted file not found: ${localEncryptedFilePath}`);
+            return res.status(404).json({ error: 'Shared file content not found.' });
+        }
+
+        const decryptedFilePath = path.join(sharedTempDir, `priv_view_${Date.now()}_${file.originalName}`);
+        await decryptFile(localEncryptedFilePath, decryptedFilePath);
+
+        await share.increment('accessCount');
+        await logActivity('private_share_view', currentUserId, file.id, `Viewed private share: ${share.id} (Token: ${shareToken})`, req);
+
+        const fileMimeType = file.fileType || 'application/octet-stream';
+        res.setHeader('Content-Type', fileMimeType);
+        res.setHeader('Content-Disposition', `inline; filename="${file.originalName}"`);
+        
+        res.sendFile(decryptedFilePath, {}, (err) => {
+            if (err) console.error('[Private Share View] Error sending file:', err);
+            fs.unlink(decryptedFilePath, (unlinkErr) => {
+                if (unlinkErr) console.error('[Private Share View] Error deleting temp viewed file:', unlinkErr);
+            });
+        });
+
+    } catch (error) {
+        console.error('[Private Share View] Error:', error);
+        res.status(500).json({ error: 'Error viewing shared file.' });
+    }
+});
+
+// Authenticated download for private shares
+router.get('/private/:shareToken/download', verifyToken, async (req, res) => {
+    try {
+        const shareToken = req.params.shareToken;
+        const currentUserId = req.user.id;
+
+        const share = await FileShare.findOne({
+            where: { shareToken: shareToken, isActive: true },
+            include: { model: File, where: { isDeleted: false } }
+        });
+
+        if (!share) return res.status(404).json({ error: 'Share not found or is inactive.' });
+        if (share.expiresAt && new Date() > new Date(share.expiresAt)) return res.status(410).json({ error: 'Share link has expired.' });
+
+        if (!share.isPrivateShare) {
+             console.warn(`[Private Share Download] Attempt to access non-private share ${shareToken} via private route by user ${currentUserId}`);
+            return res.status(403).json({ error: 'This link is not for private user-specific sharing.' });
+        }
+        if (!share.recipientUserIds || !share.recipientUserIds.includes(currentUserId)) {
+            return res.status(403).json({ error: 'You are not authorized to download this shared file.' });
+        }
+        if (!share.permissions.canDownload) return res.status(403).json({ error: 'Download not allowed for this share.' });
+
+        const file = share.File;
+        const localEncryptedFilePath = path.join(encryptedDir, file.fileName);
+
+        if (file.storageLocation === 'spaces' && file.spacesKey && !fs.existsSync(localEncryptedFilePath)) {
+            console.log(`[Private Share Download] File ${file.fileName} in Spaces. Downloading to ${localEncryptedFilePath}`);
+            await downloadFromSpaces(file.spacesKey, localEncryptedFilePath);
+        }
+
+        if (!fs.existsSync(localEncryptedFilePath)) {
+            console.error(`[Private Share Download] Encrypted file not found: ${localEncryptedFilePath}`);
+            return res.status(404).json({ error: 'Shared file content not found.' });
+        }
+
+        const decryptedFilePath = path.join(sharedTempDir, `priv_dl_${Date.now()}_${file.originalName}`);
+        await decryptFile(localEncryptedFilePath, decryptedFilePath);
+
+        await share.increment('accessCount');
+        await logActivity('private_share_download', currentUserId, file.id, `Downloaded private share: ${share.id} (Token: ${shareToken})`, req);
+        
+        res.download(decryptedFilePath, file.originalName, (err) => {
+            if (err) console.error('[Private Share Download] Error during res.download:', err);
+            fs.unlink(decryptedFilePath, (unlinkErr) => {
+                if (unlinkErr) console.error('[Private Share Download] Error deleting temp downloaded file:', unlinkErr);
+            });
+        });
+
+    } catch (error) {
+        console.error('[Private Share Download] Error:', error);
+        res.status(500).json({ error: 'Error downloading shared file.' });
+    }
 });
 
 module.exports = router;

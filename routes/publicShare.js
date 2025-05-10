@@ -13,46 +13,46 @@ router.get('/:shareToken', async (req, res) => {
     const shareToken = req.params.shareToken;
     console.log('Looking up share with token:', shareToken);
     
-    // First find the share without the File inclusion
     const share = await FileShare.findOne({
       where: {
         shareToken: shareToken,
-        isActive: true
-      }
+        // isActive: true // We might want to return info even if inactive, frontend can show status
+      },
+      include: [{ // Include File to get its details
+          model: File,
+          // where: { isDeleted: false } // File might be deleted, share still exists
+      }]
     });
     
     if (!share) {
       console.log(`Share not found for token: ${shareToken}`);
       return res.status(404).json({ error: 'Share not found - token may be invalid' });
     }
-    
-    console.log(`Found share: ${share.id}, fileId: ${share.fileId}`);
-    
-    // Then find the file separately
-    const file = await File.findOne({
-      where: { 
-        id: share.fileId,
-        isDeleted: false 
-      }
-    });
-    
-    if (!file) {
-      return res.status(404).json({ error: 'The shared file has been deleted' });
-    }
-    
-    if (share.expiresAt && new Date() > new Date(share.expiresAt)) {
-      return res.status(410).json({ error: 'Share link has expired' });
-    }
 
-    await share.update({ accessCount: share.accessCount + 1 });
-    await logActivity('share', share.createdById, share.fileId, 'Share link accessed', req);
+    const file = share.File; // File might be null if it was deleted but share record remains
+
+    if (!file || file.isDeleted) {
+        // If file is deleted, still return share info but indicate file issue
+        return res.status(410).json({ 
+            error: 'The shared file has been deleted or is unavailable.',
+            shareId: share.id,
+            isActive: share.isActive, // Still useful to know if share itself is active
+            isPrivateShare: share.isPrivateShare,
+            expiresAt: share.expiresAt
+        });
+    }
+    
+    // Note: No accessCount update or logActivity here for just fetching metadata.
+    // These actions should occur upon actual view or download.
 
     const fileInfo = {
       fileName: file.originalName,
       fileSize: file.fileSize,
       permissions: share.permissions,
       shareId: share.id,
-      expiresAt: share.expiresAt
+      expiresAt: share.expiresAt,
+      isActive: share.isActive, // Let frontend know if the share link itself is active
+      isPrivateShare: share.isPrivateShare, // Add this field
     };
 
     res.json(fileInfo);
@@ -100,8 +100,8 @@ router.get('/:shareToken/download', async (req, res) => {
     const decryptedFilePath = path.join(decryptedDir, `shared_${file.originalName}`);
     await decryptFile(encryptedFilePath, decryptedFilePath);
 
-    await logActivity('download', share.createdById, share.fileId, 'Downloaded via share link', req);
-    await share.update({ accessCount: share.accessCount + 1 });
+    await share.increment('accessCount');
+    await logActivity('public_share_download', share.createdById, share.fileId, `Downloaded via public share link (Token: ${share.shareToken})`, req);
 
     res.download(decryptedFilePath, file.originalName, (err) => {
       if (err) {
@@ -183,8 +183,8 @@ router.get('/:shareToken/view', async (req, res) => {
         const decryptedFilePath = path.join(viewDir, `share_view_${Date.now()}_${file.originalName}`);
         await decryptFile(encryptedFilePath, decryptedFilePath);
 
-        await logActivity('view', share.createdById, share.fileId, 'Viewed via share link', req);
-        await share.update({ accessCount: share.accessCount + 1 });
+        await share.increment('accessCount');
+        await logActivity('public_share_view', share.createdById, share.fileId, `Viewed via public share link (Token: ${share.shareToken})`, req);
         
         // Set appropriate headers for the file type
         const fileType = path.extname(file.originalName).toLowerCase();
